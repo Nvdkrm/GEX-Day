@@ -1,16 +1,21 @@
 """
 =============================================================================
-BOT DISCORD — QG TRADING (v3 — multi-canaux)
+BOT DISCORD — QG TRADING (v4 — multi-canaux + journal de trading)
 =============================================================================
-Surveille 3 canaux différents sur Trade Dojo et route chaque message
-vers le bon traitement n8n selon sa source :
+Surveille 5 canaux différents et route chaque message vers le bon
+traitement n8n selon sa source :
 
-  #menthor-q        → webhook n8n "menthor-q"      → Claude explique (texte)
-  #gex-daily-outlook → webhook n8n "gex-outlook"     → Claude analyse (PDF)
-  #gex-levels-dc     → webhook n8n "gex-levels"      → transfert brut (fichier)
+  #menthor-q          → webhook n8n "menthor-q"      → Claude explique (texte)
+  #gex-daily-outlook  → webhook n8n "gex-outlook"     → Claude analyse (PDF)
+  #gex-levels-dc      → webhook n8n "gex-levels"      → transfert brut (fichier)
+  #trades-bruce       → webhook n8n "trade-bruce"     → Claude Vision → Supabase
+  #trades-antho       → webhook n8n "trade-antho"     → Claude Vision → Supabase
 
 Chaque canal a son propre système de regroupement (debounce) indépendant,
-pour ne jamais mélanger les messages de sources différentes.
+pour ne jamais mélanger les messages de sources différentes. Les canaux
+GEX utilisent un délai court (60s), les canaux de trades un délai plus
+long (210s) car le screenshot et le commentaire peuvent être postés à
+quelques minutes d'écart.
 
 VARIABLES D'ENVIRONNEMENT À CONFIGURER SUR RAILWAY :
     DISCORD_BOT_TOKEN          → ton token Discord
@@ -18,12 +23,17 @@ VARIABLES D'ENVIRONNEMENT À CONFIGURER SUR RAILWAY :
     MENTHORQ_CHANNEL_ID        → 1493925337317511178
     GEX_OUTLOOK_CHANNEL_ID     → 1510366498776940644
     GEX_LEVELS_CHANNEL_ID      → 1493925486588330035
+    TRADES_BRUCE_CHANNEL_ID    → 1517576143933407323
+    TRADES_ANTHO_CHANNEL_ID    → 1517576223197364244
 
     N8N_WEBHOOK_MENTHORQ       → URL du webhook n8n pour menthor-q
     N8N_WEBHOOK_GEX_OUTLOOK    → URL du webhook n8n pour gex-outlook
     N8N_WEBHOOK_GEX_LEVELS     → URL du webhook n8n pour gex-levels
+    N8N_WEBHOOK_TRADE_BRUCE    → https://navidkarimi.app.n8n.cloud/webhook/trade-bruce
+    N8N_WEBHOOK_TRADE_ANTHO    → https://navidkarimi.app.n8n.cloud/webhook/trade-antho
 
-    SILENCE_DELAY_SECONDS      → (optionnel) défaut 60
+    SILENCE_DELAY_SECONDS         → (optionnel) défaut 60   — canaux GEX
+    TRADES_SILENCE_DELAY_SECONDS  → (optionnel) défaut 210  — canaux trades
 =============================================================================
 """
 
@@ -38,23 +48,39 @@ import os
 
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 SILENCE_DELAY_SECONDS = int(os.environ.get("SILENCE_DELAY_SECONDS", "60"))
+TRADES_SILENCE_DELAY_SECONDS = int(os.environ.get("TRADES_SILENCE_DELAY_SECONDS", "210"))
 
-# Définition des 3 routes : canal source → webhook n8n correspondant
+# Définition des 5 routes : canal source → webhook n8n correspondant
 ROUTES = {
     int(os.environ.get("MENTHORQ_CHANNEL_ID", "0")): {
         "name": "menthor-q",
         "webhook": os.environ.get("N8N_WEBHOOK_MENTHORQ", ""),
         "include_attachments": True,   # les images comptent
+        "silence_delay": SILENCE_DELAY_SECONDS,
     },
     int(os.environ.get("GEX_OUTLOOK_CHANNEL_ID", "0")): {
         "name": "gex-outlook",
         "webhook": os.environ.get("N8N_WEBHOOK_GEX_OUTLOOK", ""),
         "include_attachments": False,
+        "silence_delay": SILENCE_DELAY_SECONDS,
     },
     int(os.environ.get("GEX_LEVELS_CHANNEL_ID", "0")): {
         "name": "gex-levels",
         "webhook": os.environ.get("N8N_WEBHOOK_GEX_LEVELS", ""),
         "include_attachments": True,   # le fichier XML compte
+        "silence_delay": SILENCE_DELAY_SECONDS,
+    },
+    int(os.environ.get("TRADES_BRUCE_CHANNEL_ID", "0")): {
+        "name": "trade-bruce",
+        "webhook": os.environ.get("N8N_WEBHOOK_TRADE_BRUCE", ""),
+        "include_attachments": True,   # le screenshot compte
+        "silence_delay": TRADES_SILENCE_DELAY_SECONDS,
+    },
+    int(os.environ.get("TRADES_ANTHO_CHANNEL_ID", "0")): {
+        "name": "trade-antho",
+        "webhook": os.environ.get("N8N_WEBHOOK_TRADE_ANTHO", ""),
+        "include_attachments": True,   # le screenshot compte
+        "silence_delay": TRADES_SILENCE_DELAY_SECONDS,
     },
 }
 
@@ -72,10 +98,10 @@ pending_state = {}
 
 
 async def send_accumulated(channel_id):
-    """Attend le délai de silence, puis envoie tout le contenu accumulé au bon webhook."""
+    """Attend le délai de silence propre au canal, puis envoie tout le contenu accumulé au bon webhook."""
     route = ROUTES[channel_id]
 
-    await asyncio.sleep(SILENCE_DELAY_SECONDS)
+    await asyncio.sleep(route["silence_delay"])
 
     state = pending_state.get(channel_id)
     if not state or not state["messages"]:
@@ -86,7 +112,7 @@ async def send_accumulated(channel_id):
     author_name = state["author"]
     message_count = len(state["messages"])
 
-    print(f"\n⏰ [{route['name']}] Silence de {SILENCE_DELAY_SECONDS}s détecté")
+    print(f"\n⏰ [{route['name']}] Silence de {route['silence_delay']}s détecté")
     print(f"   {message_count} message(s), {len(full_text)} caractères, {len(attachments)} pièce(s) jointe(s)")
     print(f"   ➜ Envoi vers webhook {route['name']}...")
 
@@ -120,12 +146,12 @@ async def send_accumulated(channel_id):
 @client.event
 async def on_ready():
     print(f"✅ Bot connecté en tant que {client.user}")
-    print(f"⏱️  Délai de regroupement : {SILENCE_DELAY_SECONDS} secondes")
+    print(f"⏱️  Délai GEX : {SILENCE_DELAY_SECONDS}s | Délai trades : {TRADES_SILENCE_DELAY_SECONDS}s")
     print("─" * 60)
     print("👀 Canaux surveillés :")
     for channel_id, route in ROUTES.items():
         status = "✅" if (channel_id != 0 and route["webhook"]) else "⚠️ INCOMPLET"
-        print(f"   {status} #{route['name']:15s} (ID: {channel_id}) → {route['webhook'][:50] or 'WEBHOOK MANQUANT'}")
+        print(f"   {status} #{route['name']:15s} (ID: {channel_id}, délai {route['silence_delay']}s) → {route['webhook'][:50] or 'WEBHOOK MANQUANT'}")
     print("─" * 60)
     print("Le bot est actif sur Railway — tourne 24/7.")
     print("─" * 60)
