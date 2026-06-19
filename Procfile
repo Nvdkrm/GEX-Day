@@ -1,1 +1,1 @@
-worker: python bot_gex_v2.py
+worker: python bot_gex_v3.py
