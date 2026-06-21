@@ -208,6 +208,23 @@ async def on_message(message):
     if embed_text:
         content_text = (content_text + "\n" + embed_text).strip() if content_text else embed_text
 
+    # Discord transforme automatiquement un message trop long (>2000 caractères)
+    # en pièce jointe "message.txt" — on la lit et on l'intègre comme texte,
+    # au lieu de la traiter comme une vraie pièce jointe (image, screenshot, etc.)
+    text_attachments = [a for a in content_attachments if a.content_type and a.content_type.startswith("text/")]
+    if text_attachments:
+        text_parts = []
+        for att in text_attachments:
+            try:
+                data = await att.read()
+                text_parts.append(data.decode("utf-8", errors="replace"))
+            except Exception as e:
+                print(f"   ⚠️ Impossible de lire la pièce jointe texte {att.filename} : {e}")
+        text_from_files = "\n".join(text_parts)
+        if text_from_files:
+            content_text = (content_text + "\n" + text_from_files).strip() if content_text else text_from_files
+        content_attachments = [a for a in content_attachments if a not in text_attachments]
+
     has_text = content_text and len(content_text.strip()) > 0
     has_attachments = len(content_attachments) > 0
 
