@@ -168,24 +168,34 @@ async def on_message(message):
 
     route = ROUTES[channel_id]
 
-    has_text = message.content and len(message.content.strip()) > 0
-    has_attachments = len(message.attachments) > 0
+    # Gère les messages transférés (Forward) : le contenu réel est dans
+    # message_snapshots, pas dans message.content / message.attachments
+    # qui restent vides pour un message transféré.
+    content_text = message.content
+    content_attachments = message.attachments
+
+    if not content_text and not content_attachments and getattr(message, "message_snapshots", None):
+        snapshot = message.message_snapshots[0]
+        content_text = snapshot.content
+        content_attachments = snapshot.attachments
+
+    has_text = content_text and len(content_text.strip()) > 0
+    has_attachments = len(content_attachments) > 0
 
     if not has_text and not has_attachments:
         return  # message totalement vide
 
     print(f"📨 [{route['name']}] Message reçu de {message.author.name} "
-          f"({len(message.content)} caractères, {len(message.attachments)} pièce(s) jointe(s)) — en attente...")
+          f"({len(content_text)} caractères, {len(content_attachments)} pièce(s) jointe(s)) — en attente...")
 
-    # Initialise l'état pour ce canal si besoin
     if channel_id not in pending_state or not pending_state[channel_id].get("messages") and not pending_state[channel_id].get("attachments"):
         pending_state[channel_id] = {"messages": [], "attachments": [], "author": None, "task": None}
 
     state = pending_state[channel_id]
 
     if has_text:
-        state["messages"].append(message.content)
-    for att in message.attachments:
+        state["messages"].append(content_text)
+    for att in content_attachments:
         state["attachments"].append({
             "filename": att.filename,
             "url": att.url,
@@ -194,12 +204,10 @@ async def on_message(message):
 
     state["author"] = message.author.name
 
-    # Annule le timer précédent pour CE canal uniquement
     if state["task"] and not state["task"].done():
         state["task"].cancel()
 
     state["task"] = asyncio.create_task(send_accumulated(channel_id))
-
 
 # ─────────────────────────────────────────────────────────────────────────
 # LANCEMENT
