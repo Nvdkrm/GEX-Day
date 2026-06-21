@@ -17,6 +17,11 @@ GEX utilisent un délai court (60s), les canaux de trades un délai plus
 long (210s) car le screenshot et le commentaire peuvent être postés à
 quelques minutes d'écart.
 
+Gère aussi les messages TRANSFÉRÉS (Forward) : pour un message transféré,
+Discord laisse message.content et message.attachments vides — le contenu
+réel est dans message.message_snapshots (discord.py >= 2.5). Le bot
+détecte ce cas et va chercher le contenu au bon endroit.
+
 VARIABLES D'ENVIRONNEMENT À CONFIGURER SUR RAILWAY :
     DISCORD_BOT_TOKEN          → ton token Discord
 
@@ -188,6 +193,7 @@ async def on_message(message):
     print(f"📨 [{route['name']}] Message reçu de {message.author.name} "
           f"({len(content_text)} caractères, {len(content_attachments)} pièce(s) jointe(s)) — en attente...")
 
+    # Initialise l'état pour ce canal si besoin
     if channel_id not in pending_state or not pending_state[channel_id].get("messages") and not pending_state[channel_id].get("attachments"):
         pending_state[channel_id] = {"messages": [], "attachments": [], "author": None, "task": None}
 
@@ -204,10 +210,12 @@ async def on_message(message):
 
     state["author"] = message.author.name
 
+    # Annule le timer précédent pour CE canal uniquement
     if state["task"] and not state["task"].done():
         state["task"].cancel()
 
     state["task"] = asyncio.create_task(send_accumulated(channel_id))
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # LANCEMENT
