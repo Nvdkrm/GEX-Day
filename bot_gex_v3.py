@@ -162,6 +162,21 @@ async def on_ready():
     print("─" * 60)
 
 
+def extract_embed_text(embeds):
+    """Sérialise le contenu d'embeds Discord (titre, description, champs) en texte brut."""
+    parts = []
+    for embed in embeds:
+        if embed.title:
+            parts.append(str(embed.title))
+        if embed.description:
+            parts.append(str(embed.description))
+        for field in embed.fields:
+            parts.append(f"{field.name}: {field.value}")
+        if embed.footer and embed.footer.text:
+            parts.append(str(embed.footer.text))
+    return "\n".join(parts)
+
+
 @client.event
 async def on_message(message):
     if message.author == client.user:
@@ -178,11 +193,20 @@ async def on_message(message):
     # qui restent vides pour un message transféré.
     content_text = message.content
     content_attachments = message.attachments
+    content_embeds = message.embeds
 
-    if not content_text and not content_attachments and getattr(message, "message_snapshots", None):
+    if not content_text and not content_attachments and not content_embeds and getattr(message, "message_snapshots", None):
         snapshot = message.message_snapshots[0]
         content_text = snapshot.content
         content_attachments = snapshot.attachments
+        content_embeds = getattr(snapshot, "embeds", [])
+
+    # Les bots (ex: JimmyJumbo Bot) postent souvent leurs données sous forme
+    # d'Embed Discord plutôt qu'en texte brut ou pièce jointe — on les
+    # sérialise en texte pour ne pas perdre l'info.
+    embed_text = extract_embed_text(content_embeds) if content_embeds else ""
+    if embed_text:
+        content_text = (content_text + "\n" + embed_text).strip() if content_text else embed_text
 
     has_text = content_text and len(content_text.strip()) > 0
     has_attachments = len(content_attachments) > 0
