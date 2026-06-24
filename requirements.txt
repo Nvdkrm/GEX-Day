@@ -1,2 +1,2 @@
 discord.py==2.7.1
-requests==2.34.2
+aiohttp>=3.9.0
