@@ -53,7 +53,7 @@ import os
 
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 SILENCE_DELAY_SECONDS = int(os.environ.get("SILENCE_DELAY_SECONDS", "60"))
-TRADES_SILENCE_DELAY_SECONDS = int(os.environ.get("TRADES_SILENCE_DELAY_SECONDS", "210"))
+TRADES_SILENCE_DELAY_SECONDS = int(os.environ.get("TRADES_SILENCE_DELAY_SECONDS", "60"))
 
 # Définition des 5 routes : canal source → webhook n8n correspondant
 ROUTES = {
