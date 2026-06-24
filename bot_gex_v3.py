@@ -16,7 +16,7 @@ VARIABLES D'ENVIRONNEMENT RAILWAY :
     GEX_LEVELS_CHANNEL_ID      → 1493925486588330035
     TRADES_BRUCE_CHANNEL_ID    → 1517576143933407323
     TRADES_ANTHO_CHANNEL_ID    → 1517576223197364244
-    JOURNAL_VOCAL_CHANNEL_ID   → 1519420310716158022
+    JOURNAL_VOCAL_CHANNEL_ID   → 1519455507079893103
     N8N_WEBHOOK_MENTHORQ
     N8N_WEBHOOK_GEX_OUTLOOK
     N8N_WEBHOOK_GEX_LEVELS
@@ -30,7 +30,7 @@ VARIABLES D'ENVIRONNEMENT RAILWAY :
 """
 
 import discord
-import requests
+import aiohttp
 import asyncio
 import os
 
@@ -39,42 +39,53 @@ SILENCE_DELAY_SECONDS = int(os.environ.get("SILENCE_DELAY_SECONDS", "60"))
 TRADES_SILENCE_DELAY_SECONDS = int(os.environ.get("TRADES_SILENCE_DELAY_SECONDS", "60"))
 JOURNAL_SILENCE_DELAY_SECONDS = int(os.environ.get("JOURNAL_SILENCE_DELAY_SECONDS", "5"))
 
+# Timeouts HTTP par type de canal
+WEBHOOK_TIMEOUT_DEFAULT = 30   # GEX / menthorq
+WEBHOOK_TIMEOUT_TRADES  = 30   # trades bruce / antho
+WEBHOOK_TIMEOUT_JOURNAL = 60   # journal vocal — n8n peut être froid, on laisse 60s
+
 ROUTES = {
     int(os.environ.get("MENTHORQ_CHANNEL_ID", "0")): {
         "name": "menthor-q",
         "webhook": os.environ.get("N8N_WEBHOOK_MENTHORQ", ""),
         "include_attachments": True,
         "silence_delay": SILENCE_DELAY_SECONDS,
+        "timeout": WEBHOOK_TIMEOUT_DEFAULT,
     },
     int(os.environ.get("GEX_OUTLOOK_CHANNEL_ID", "0")): {
         "name": "gex-outlook",
         "webhook": os.environ.get("N8N_WEBHOOK_GEX_OUTLOOK", ""),
         "include_attachments": False,
         "silence_delay": SILENCE_DELAY_SECONDS,
+        "timeout": WEBHOOK_TIMEOUT_DEFAULT,
     },
     int(os.environ.get("GEX_LEVELS_CHANNEL_ID", "0")): {
         "name": "gex-levels",
         "webhook": os.environ.get("N8N_WEBHOOK_GEX_LEVELS", ""),
         "include_attachments": True,
         "silence_delay": SILENCE_DELAY_SECONDS,
+        "timeout": WEBHOOK_TIMEOUT_DEFAULT,
     },
     int(os.environ.get("TRADES_BRUCE_CHANNEL_ID", "0")): {
         "name": "trade-bruce",
         "webhook": os.environ.get("N8N_WEBHOOK_TRADE_BRUCE", ""),
         "include_attachments": True,
         "silence_delay": TRADES_SILENCE_DELAY_SECONDS,
+        "timeout": WEBHOOK_TIMEOUT_TRADES,
     },
     int(os.environ.get("TRADES_ANTHO_CHANNEL_ID", "0")): {
         "name": "trade-antho",
         "webhook": os.environ.get("N8N_WEBHOOK_TRADE_ANTHO", ""),
         "include_attachments": True,
         "silence_delay": TRADES_SILENCE_DELAY_SECONDS,
+        "timeout": WEBHOOK_TIMEOUT_TRADES,
     },
     int(os.environ.get("JOURNAL_VOCAL_CHANNEL_ID", "0")): {
         "name": "journal-vocal",
         "webhook": os.environ.get("N8N_WEBHOOK_JOURNAL_VOCAL", ""),
         "include_attachments": True,
         "silence_delay": JOURNAL_SILENCE_DELAY_SECONDS,
+        "timeout": WEBHOOK_TIMEOUT_JOURNAL,
     },
 }
 
@@ -109,14 +120,20 @@ async def send_accumulated(channel_id):
         print(f"   ⚠️ Aucun webhook configuré pour {route['name']} — message ignoré")
         pending_state[channel_id] = {"messages": [], "attachments": [], "author": None, "task": None}
         return
+    timeout = aiohttp.ClientTimeout(total=route["timeout"])
     try:
-        response = requests.post(webhook_url, json=payload, timeout=20)
-        if response.status_code in (200, 201, 202):
-            print(f"   ✅ Envoyé avec succès vers {route['name']}.")
-        else:
-            print(f"   ⚠️ Webhook {route['name']} a répondu avec le code {response.status_code}")
-            print(f"   Réponse : {response.text[:200]}")
-    except requests.exceptions.RequestException as e:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(webhook_url, json=payload) as response:
+                status = response.status
+                if status in (200, 201, 202):
+                    print(f"   ✅ Envoyé avec succès vers {route['name']} (HTTP {status}).")
+                else:
+                    body = await response.text()
+                    print(f"   ⚠️ Webhook {route['name']} a répondu avec le code {status}")
+                    print(f"   Réponse : {body[:200]}")
+    except asyncio.TimeoutError:
+        print(f"   ❌ Timeout ({route['timeout']}s) atteint pour {route['name']} — n8n n'a pas répondu à temps")
+    except aiohttp.ClientError as e:
         print(f"   ❌ Erreur de connexion au webhook {route['name']} : {e}")
     pending_state[channel_id] = {"messages": [], "attachments": [], "author": None, "task": None}
 
@@ -129,7 +146,7 @@ async def on_ready():
     print("👀 Canaux surveillés :")
     for channel_id, route in ROUTES.items():
         status = "✅" if (channel_id != 0 and route["webhook"]) else "⚠️ INCOMPLET"
-        print(f"   {status} #{route['name']:15s} (ID: {channel_id}, délai {route['silence_delay']}s) → {route['webhook'][:50] or 'WEBHOOK MANQUANT'}")
+        print(f"   {status} #{route['name']:15s} (ID: {channel_id}, délai {route['silence_delay']}s, timeout {route['timeout']}s) → {route['webhook'][:50] or 'WEBHOOK MANQUANT'}")
     print("─" * 60)
     print("Le bot est actif sur Railway — tourne 24/7.")
     print("─" * 60)
